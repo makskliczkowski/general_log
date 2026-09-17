@@ -1,0 +1,26 @@
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Environments
+.venv/
+venv/
+env/
+
+# Build / packaging artifacts
+build/
+dist/
+*.egg-info/
+
+# Local log output (default directory of the Logger file handler)
+log/
+*.log
+
+# Editor / OS cruft
+.DS_Store
+*.swp
+.idea/
+.vscode/
