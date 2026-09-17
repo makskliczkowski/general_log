@@ -1,35 +1,14 @@
 # general_log
 
-Colored, verbosity-aware console and file logging helpers for Python projects.
-
-`general_log` wraps the standard `logging` module behind a compact API with
-indentation, per-level colors, optional file output, and a few print/table
-helpers. It is designed both as a git submodule/subtree for embedded use and as
-a pip-installable package.
-
-## Features
-
-- `Logger` class with `info` / `debug` / `warning` / `error` / `say`, indentation
-  (`lvl`), colored output (auto on TTY), `title`, and `timing` decorator.
-- Runtime level control: `set_level()`, `.level`, `.verbose`.
-- Process-wide `get_global_logger()` singleton, fork- and thread-safe.
-- Optional file logging with a session header; ANSI codes stripped from file
-  output.
-- Notebook/IPython detection; a shared console handler prevents duplicate output.
-- Env-configurable defaults: `PYLOGCOLORS`, `PYLOGFILE`, `PYLOGLEVEL`; honors the
-  standard `NO_COLOR`.
-- Module helpers: `printV`, `printJust`, `printDictionary`, `print_arguments`,
-  `log_timing_summary`.
-- Zero required dependencies. Python 3.10+. PEP 561 typed (`py.typed`).
+A colored, verbosity-aware console and file logging library for Python. It wraps the standard `logging` module behind a compact API with indentation, colors, optional file output, and a few table and timing helpers. Zero required dependencies, Python 3.10+, and usable both as a pip package and as a vendored git submodule.
 
 ## Install
 
 ```bash
-pip install -e .            # editable, local
-pip install git+https://github.com/your-org/general_log   # from git
+pip install -e .
 ```
 
-Or embed as a submodule/subtree and import from the vendored path:
+To keep it inside one of your repositories as a submodule:
 
 ```bash
 git submodule add https://github.com/your-org/general_log vendor/general_log
@@ -37,87 +16,71 @@ git submodule add https://github.com/your-org/general_log vendor/general_log
 
 ## Quick start
 
+`get_global_logger()` returns a process-wide singleton. The first call builds the logger; later calls return the same instance, so you can create it once and share it across modules.
+
 ```python
 from general_log import get_global_logger
 
 logger = get_global_logger()
 logger.info("Hello, world!")
-logger.warning("Careful.")
-logger.error("Boom.")
-logger.say("Line one", "Line two", log="info", lvl=1)
-logger.title("Section title", desired_size=60, fill="=")
 ```
 
-With file output:
+Console output includes a timestamp by default and a colored level name:
+
+```
+17_09_2026_17-19-34 [INFO] Hello, world!
+```
+
+Pass `use_ts_in_cmd=False` to drop the timestamp. To create a standalone instance instead, use `Logger` directly:
 
 ```python
 from general_log import Logger
 
-logger = Logger(name="app", logfile="run", append_ts=True)
-logger.info("Hello from a file.")
+logger = Logger(name="app")
 ```
 
-The log file is written to `./log/run_<timestamp>.log` (with `append_ts=True`)
-or `./log/run.log` (without).  `get_logger` and `get_global_logger` default to
-`append_ts=True`.
+## Levels and verbosity
 
-## Environment variables
-
-| Variable | Effect |
-| --- | --- |
-| `PYLOGCOLORS=1` | Force console colors on (even for non-TTY output). |
-| `PYLOGCOLORS=0` | Disable console colors. |
-| `NO_COLOR` (any value) | Disable console colors (https://no-color.org). |
-| `PYLOGFILE=<path>` | Default log file used when no `logfile` is passed. |
-| `PYLOGLEVEL=<level>` | Default level used when `lvl` is not passed (`warning`, etc.). |
-
-Without `PYLOGCOLORS`, `NO_COLOR` disables colors (https://no-color.org) and
-color auto-enables only on a TTY.  `PYLOGCOLORS` always wins: `=0` forces
-off, `=1` forces on regardless of TTY or `NO_COLOR`.  On Windows, ANSI
-processing is enabled through `colorama` when installed
-(`pip install general-log[color]`); without it colors stay off.
-
-## Colors
-
-The level field of each console line is colored per level (debug cyan, info
-green, warning yellow, error red, critical magenta).  Message colors are
-applied per call:
+A logger has a severity level. Debug output is invisible unless requested; the default level is INFO.
 
 ```python
-logger.info("plain")                       # green level, plain message
-logger.info("hello", color="cyan")         # cyan message
-logger.warning("careful")                  # yellow by default
-logger.error("boom")                       # red by default
+logger.debug("Entering the loop")
+logger.info("Started training")
+logger.warning("GPU memory is low")
+logger.error("Model file not found")
 ```
 
-File output always strips ANSI codes, regardless of console colors.
-
-## Runtime level control
+Set the level at construction, at runtime, or from the environment:
 
 ```python
-logger.set_level("debug")     # name, letter, or logging int
-logger.level                  # current level as an int
-logger.verbose                # True when DEBUG+ is recorded
+logger = get_global_logger(lvl="debug")     # logging int, name, or letter
+logger.set_level("debug")                   # runtime change
+logger.level                                # current level as an int
+logger.verbose                              # True when DEBUG+ is recorded
 ```
 
-`set_level` reconfigures the wrapped logger and every attached handler
-immediately.
+`PYLOGLEVEL=warning python train.py` silences everything below warning without touching the code.
 
-## Logging levels
+## Conveniences
 
-Levels accept `logging` ints, names, or first-letter shorthands:
+`say` logs several messages in one call. They become separate lines, or are joined with spaces when `end=False`:
 
 ```python
-logger.say("msg", log="warning")     # WARNING
-logger.say("msg", log="w")           # WARNING
-logger.say("msg", log=logging.INFO)  # INFO
+logger.say("Loading data", "Preprocessing")
+logger.say("Dev", "Test", end=False)
 ```
 
-The wrapped `logging` logger is available as `logger.logger`, so the full
-`logging` API (filters, custom handlers, `logger.exception`) remains usable on
-the same name.
+`title` centers text with a filler character:
 
-## Timing
+```python
+logger.title("Training", desired_size=50, fill="=")
+```
+
+```
+[INFO] =====================Training=====================
+```
+
+`timing` logs a function's execution time as debug messages:
 
 ```python
 @logger.timing
@@ -125,14 +88,74 @@ def train():
     ...
 ```
 
-`logger.timing` logs a debug message before and after the call with the elapsed
-time.
+It emits `Starting 'train'...` before the call and `Finished 'train' in 3.2 seconds.` after.
 
-`log_timing_summary` renders a phase map as a table:
+## Indentation
+
+Logging methods accept an `lvl` argument that indents the line:
+
+```python
+logger.info("Outer step")
+logger.info("Inner detail", lvl=1)
+logger.info("Deeper still", lvl=2)
+```
+
+```
+[INFO] Outer step
+[INFO] 	->Inner detail
+[INFO] 		->Deeper still
+```
+
+The arrow deepens with each nesting level, so the structure of a run stays visible at a glance.
+
+## File output
+
+Pass a `logfile` name and the logger writes to disk in addition to the console. The file lands in `./log/` by default:
+
+```python
+logger = Logger(name="app", logfile="run")          # ./log/run.log
+logger = Logger(name="app", logfile="run", append_ts=True)  # ./log/run_17_09_2026_17-19-34.log
+```
+
+The file starts with a header recording the creation time, user, machine, and Python version. ANSI codes are stripped from file output. `configure(directory)` relocates the file at runtime; `close()` flushes and detaches the handlers.
+
+## Colors
+
+The level field is colored per level: debug cyan, info green, warning yellow, error red, critical magenta. Message text can be colored per call:
+
+```python
+logger.info("hello", color="cyan")
+logger.warning("careful")            # yellow by default
+logger.error("boom")                 # red by default
+```
+
+Colors auto-enable only on a TTY. `NO_COLOR` disables them; `PYLOGCOLORS=1` and `PYLOGCOLORS=0` force the decision on or off and take precedence over both. On Windows, ANSI processing uses `colorama` when installed (`pip install general-log[color]`); otherwise colors stay off.
+
+## Helpers
+
+A few module-level helpers cover common patterns:
+
+```python
+printV("detail", v=verbose)                          # print gated on a flag
+printJust(sys.stdout, elements=[1.0, 2.5], width=10) # fixed-width columns
+printDictionary({"lr": 1e-3, "epochs": 10})          # "lr: 1e-3, epochs: 10"
+```
+
+`print_arguments` renders an `argparse` parser's options as a table, optionally through a logger. `log_timing_summary` logs a phase-duration table with a Total row, and warns when a provided total disagrees with the phase sum:
 
 ```python
 log_timing_summary(logger, {"compile": 1.2, "train": 9.8}, total_duration=11.2)
 ```
+
+## Environment variables
+
+| Variable | Effect |
+| --- | --- |
+| `PYLOGCOLORS=1` | Force console colors on, even for non-TTY output. |
+| `PYLOGCOLORS=0` | Force console colors off. |
+| `NO_COLOR` | Disable console colors (https://no-color.org). |
+| `PYLOGFILE=<path>` | Default log file when no `logfile` is passed. |
+| `PYLOGLEVEL=<level>` | Default level when `lvl` is not passed. |
 
 ## Import paths
 
