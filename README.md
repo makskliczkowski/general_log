@@ -1,4 +1,4 @@
-# general_log
+# General Log
 
 A colored, verbosity-aware console and file logging library for Python. It wraps the standard `logging` module behind a compact API with indentation, colors, optional file output, and a few table and timing helpers. Zero required dependencies, Python 3.10+, and usable both as a pip package and as a vendored git submodule.
 
