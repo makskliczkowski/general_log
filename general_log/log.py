@@ -334,6 +334,21 @@ def _write_header(logfile: str, levelname: str) -> None:
 # Logger
 # ---------------------------------------------------------------------------
 
+class _ProgressConsoleHandler(logging.StreamHandler[TextIO]):
+    """Emit console records through tqdm when it is loaded, preserving active bars."""
+
+    def emit(self, record: logging.LogRecord) -> None:
+        if "tqdm" not in sys.modules:
+            super().emit(record)
+            return
+        try:
+            from tqdm import tqdm
+            tqdm.write(self.format(record), file=self.stream, end=self.terminator)
+            self.flush()
+        except Exception:
+            self.handleError(record)
+
+
 class Logger:
     """Console and file logger with verbosity, indentation, and color.
 
@@ -456,7 +471,7 @@ class Logger:
 
         def make_handler() -> logging.StreamHandler[TextIO]:
             formatter = self._console_formatter(use_timestamp)
-            handler: logging.StreamHandler[TextIO] = logging.StreamHandler(stream)
+            handler: logging.StreamHandler[TextIO] = _ProgressConsoleHandler(stream)
             handler.setLevel(self.lvl)
             handler.setFormatter(formatter)
             return handler
@@ -476,6 +491,28 @@ class Logger:
                 self.logger.removeHandler(handler)
         if not bound_to_current:
             self.logger.addHandler(make_handler())
+
+    def progress(self, iterable: Iterable[T] | None = None, *, backend: Literal["auto", "notebook", "terminal"] = "auto", **kwargs: Any) -> Any:
+        """progress(iterable=None, *, backend='auto', **kwargs): return a native tqdm bar.
+
+        ``auto`` selects notebook widgets when available, otherwise a terminal bar. Explicit
+        ``notebook`` requires ipywidgets. All kwargs pass to tqdm, including ``total``, ``desc``,
+        ``position``, ``leave``, and ``disable``. The returned bar supports iteration, context
+        management, ``update``, and ``set_postfix``. Logs retain their indentation and file output.
+        Install ``general-log[progress]`` for tqdm, or ``general-log[notebook]`` for widgets.
+        """
+        if backend not in ("auto", "notebook", "terminal"):
+            raise ValueError("backend must be 'auto', 'notebook', or 'terminal'")
+        try:
+            if backend == "notebook":
+                from tqdm.notebook import tqdm
+            elif backend == "terminal":
+                from tqdm import tqdm
+            else:
+                from tqdm.auto import tqdm
+        except ImportError as error:
+            raise ImportError("Logger.progress requires tqdm; install general-log[progress]") from error
+        return tqdm(iterable, **kwargs)
 
     # ------------------------------------------------------------- file setup
 
@@ -518,6 +555,34 @@ class Logger:
     # ------------------------------------------------------------- formatting
 
     @staticmethod
+    def _format_columns(msg: object, column_width: int | Sequence[int] | None, align: str | Sequence[str]) -> str:
+        """_format_columns(msg, column_width, align): pad scalar or sequence values to minimum widths.
+
+        Widths count characters excluding ANSI color codes. Values are never truncated.
+        A sequence supplies one value per column; a scalar supplies one column.
+        """
+        if column_width is None:
+            return str(msg)
+        values = list(msg)                      if isinstance(msg, Sequence) and not isinstance(msg, (str, bytes, bytearray)) else [msg]
+        widths = [column_width] * len(values)   if isinstance(column_width, int) else list(column_width)
+        aligns = [align]        * len(values)   if isinstance(align, str) else list(align)
+        
+        if len(widths) != len(values) or len(aligns) != len(values):
+            raise ValueError("column_width and align must have one entry per column")
+        if any(not isinstance(width, int) or isinstance(width, bool) or width < 0 for width in widths):
+            raise ValueError("column widths must be non-negative integers")
+        if any(alignment not in ("left", "right", "center") for alignment in aligns):
+            raise ValueError("align must be 'left', 'right', or 'center' for each column")
+        
+        columns = []
+        for value, width, alignment in zip(values, widths, aligns):
+            token   = str(value)
+            padding = max(0, width - len(_ansi_escape.sub("", token)))
+            left    = padding if alignment == "right" else padding // 2 if alignment == "center" else 0
+            columns.append(" " * left + token + " " * (padding - left))
+        return " ".join(columns)
+
+    @staticmethod
     def colorize(txt: object, color: str | None) -> str:
         """Wrap ``txt`` in the ANSI code for ``color`` (see :func:`colorize`)."""
         return colorize(txt, color)
@@ -537,16 +602,8 @@ class Logger:
         method = getattr(self.logger, self.LEVELS.get(log_level, "info"))
         method(self.print(msg, lvl))
 
-    def say(
-        self,
-        *args: object,
-        end: bool = True,
-        log: int | str | None = logging.INFO,
-        lvl: int = 0,
-        verbose: bool = True,
-        color: str | None = None,
-    ) -> None:
-        """Log multiple messages joined into one record if verbosity is enabled.
+    def say(self, *args: object, end: bool = True, log: int | str | None = logging.INFO, lvl: int = 0, verbose: bool = True, color: str | None = None, column_width: int | Sequence[int] | None = None, align: str | Sequence[str] = "left") -> None:
+        """say(*args, ...): log multiple messages, optionally as a fixed-width column row.
 
         Args:
             *args: Messages to log; each is ``str()``-coerced.
@@ -556,55 +613,63 @@ class Logger:
             lvl: Indentation level.
             verbose: Whether to log at all (default True).
             color: Optional color name applied when console colors are on.
+            column_width: Optional shared width or one minimum width per message.
+                With this option, args form columns in a single row; ``end`` is ignored.
+            align: Shared alignment or one of left/right/center per column.
         """
         level = coerce_level(log)
         if not verbose or level < self.lvl:
             return
         messages = [str(arg) for arg in args]
-        combined = "\n".join(messages) if end else " ".join(messages)
+        combined = self._format_columns(args, column_width, align) if column_width is not None else "\n".join(messages) if end else " ".join(messages)
         if color is not None and self.has_colors:
             combined = self.colorize(combined, color)
         self._log_message(level, combined, lvl)
 
-    def info(self, msg: object, lvl: int = 0, verbose: bool = True, color: str | None = None) -> None:
-        """Log an informational message if verbosity is enabled."""
+    def info(self, msg: object, lvl: int = 0, verbose: bool = True, color: str | None = None, *, column_width: int | Sequence[int] | None = None, align: str | Sequence[str] = "left") -> None:
+        """info(msg, ...): log an informational message, optionally with fixed-width columns."""
         if not verbose:
             return
+        msg = self._format_columns(msg, column_width, align)
         if color is not None and self.has_colors:
             msg = self.colorize(msg, color)
         self.logger.info(self.print(str(msg), lvl))
 
-    def debug(self, msg: object, lvl: int = 0, verbose: bool = True, color: str | None = None) -> None:
-        """Log a debug message if verbosity is enabled."""
+    def debug(self, msg: object, lvl: int = 0, verbose: bool = True, color: str | None = None, *, column_width: int | Sequence[int] | None = None, align: str | Sequence[str] = "left") -> None:
+        """debug(msg, ...): log a debug message, optionally with fixed-width columns."""
         if not verbose:
             return
+        msg = self._format_columns(msg, column_width, align)
         if color is not None and self.has_colors:
             msg = self.colorize(msg, color)
         self.logger.debug(self.print(str(msg), lvl))
 
-    def warning(self, msg: object, lvl: int = 0, verbose: bool = True, color: str = "yellow") -> None:
-        """Log a warning message if verbosity is enabled."""
+    def warning(self, msg: object, lvl: int = 0, verbose: bool = True, color: str = "yellow", *, column_width: int | Sequence[int] | None = None, align: str | Sequence[str] = "left") -> None:
+        """warning(msg, ...): log a warning message, optionally with fixed-width columns."""
         if not verbose:
             return
+        msg = self._format_columns(msg, column_width, align)
         if self.has_colors:
             msg = self.colorize(msg, color)
         self.logger.warning(self.print(str(msg), lvl))
 
-    def error(self, msg: object, lvl: int = 0, verbose: bool = True, color: str = "red") -> None:
-        """Log an error message if verbosity is enabled."""
+    def error(self, msg: object, lvl: int = 0, verbose: bool = True, color: str = "red", *, column_width: int | Sequence[int] | None = None, align: str | Sequence[str] = "left") -> None:
+        """error(msg, ...): log an error message, optionally with fixed-width columns."""
         if not verbose:
             return
+        msg = self._format_columns(msg, column_width, align)
         if self.has_colors:
             msg = self.colorize(msg, color)
         self.logger.error(self.print(str(msg), lvl))
 
-    def exception(self, msg: object = "", lvl: int = 0, **kwargs: Any) -> None:
-        """Log an error with the current exception traceback.
+    def exception(self, msg: object = "", lvl: int = 0, *, column_width: int | Sequence[int] | None = None, align: str | Sequence[str] = "left", **kwargs: Any) -> None:
+        """exception(msg='', ...): log an optional column row with the current traceback.
 
         Call inside an ``except`` block; outside one it behaves like
         :meth:`error`.  The traceback is passed via ``exc_info=True`` so the
         file handler records it too.
         """
+        msg = self._format_columns(msg, column_width, align)
         try:
             self.logger.error(self.print(str(msg), lvl), exc_info=True, **kwargs)
         except Exception:
@@ -618,16 +683,8 @@ class Logger:
         for _ in range(n):
             print()
 
-    def title(
-        self,
-        tail: str,
-        desired_size: int = 50,
-        fill: str = "=",
-        lvl: int = 0,
-        verbose: bool = True,
-        color: str | None = None,
-    ) -> None:
-        """Log a title centered with ``fill`` characters.
+    def title(self, tail: str, desired_size: int = 50, fill: str = "=", lvl: int = 0, verbose: bool = True, color: str | None = None, column_width: int | Sequence[int] | None = None, align: str | Sequence[str] = "left") -> None:
+        """title(tail, ...): log a title centered with ``fill`` and optional column padding.
 
         Args:
             tail: Text centered within the title.
@@ -636,13 +693,15 @@ class Logger:
             lvl: Indentation level.
             verbose: Whether to log (default True).
             color: Optional color name applied when console colors are on.
+            column_width: Optional minimum width of the generated title column.
+            align: Alignment of the generated title in that column.
         """
         if not verbose:
             return
         tail_length = len(tail)
         lvl_len     = 2 + lvl * 3 * 2
         if tail_length + lvl_len > desired_size:
-            self.info(tail, lvl, verbose)
+            self.info(tail, lvl, verbose, color, column_width=column_width, align=align)
             return
         fill_len  = max(1, len(fill))
         fill_size = (desired_size - tail_length) // (2 * fill_len)
@@ -651,7 +710,7 @@ class Logger:
             out += fill[0] * max(0, desired_size - len(out) - 1)
         elif len(out) > desired_size:
             out = out[:desired_size]
-        self.info(out, lvl, verbose, color)
+        self.info(out, lvl, verbose, color, column_width=column_width, align=align)
 
     def timing(self, func: Callable[..., T]) -> Callable[..., T]:
         """Decorate ``func`` to log its execution time at debug level.
@@ -912,3 +971,8 @@ def get_logger(**kwargs: Any) -> Logger:
         use_ts_in_cmd=kwargs.get("use_ts_in_cmd", True),
         logfile=kwargs.get("logfile"),
     )
+
+
+# ---------------------------------------------------------------------------
+#! EOF
+# ---------------------------------------------------------------------------

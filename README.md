@@ -1,6 +1,6 @@
 # General Log
 
-A colored, verbosity-aware console and file logging library for Python. It wraps the standard `logging` module behind a compact API with indentation, colors, optional file output, and a few table and timing helpers. Zero required dependencies, Python 3.10+, and usable both as a pip package and as a vendored git submodule.
+A colored, verbosity-aware console and file logging library for Python. It wraps the standard `logging` module behind a compact API with indentation, colors, optional file output, and a few table and timing helpers. Zero required dependencies, optional tqdm progress bars and notebook widgets, Python 3.10+, and usable both as a pip package and as a vendored git submodule.
 
 ## Install
 
@@ -107,6 +107,38 @@ logger.info("Deeper still", lvl=2)
 ```
 
 The arrow deepens with each nesting level, so the structure of a run stays visible at a glance.
+
+## Column widths
+
+Message methods accept optional `column_width` and `align` arguments. Pass a list or tuple of values as the message. An integer gives every column the same minimum width; a sequence gives one width per column. Adjacent columns have one separating space.
+
+```python
+logger.info(["arm", "energy", "variance"], column_width=(20, 14, 12))
+logger.info(["rbm/iite", "-1.234567", "2.30e-06"], column_width=(20, 14, 12), align=("left", "right", "right"), lvl=1)
+logger.warning(["status", "stalled"], column_width=16)
+logger.say("rbm", "saved", column_width=(20, 12))
+```
+
+`align` accepts `"left"` (default), `"right"`, or `"center"`, either shared or per column. Widths are non-negative minimum character counts. ANSI color codes do not count toward the width. Long values are retained without truncation. Numeric formatting remains explicit, for example `f"{energy:.6f}"`.
+
+The options work with `info`, `debug`, `warning`, `error`, `exception`, `say`, and `title`. A scalar message becomes one column. With widths specified, `say` formats its arguments as one row and ignores `end`; `title` pads its generated title as one column. Column layout is preserved in console output and log files, including when tqdm bars are active. Without `column_width`, existing message formatting is unchanged.
+
+## Progress bars
+
+`logger.progress(...)` returns a native `tqdm` bar. The default `backend="auto"` selects notebook widgets when available and a terminal bar otherwise. Install `general-log[progress]` for tqdm or `general-log[notebook]` for tqdm and ipywidgets.
+
+```python
+with logger.progress(range(100), desc="Training", unit="step") as steps:
+    for step in steps:
+        loss = train_step(step)
+        steps.set_postfix(loss=f"{loss:.3e}")
+        if step % 20 == 0:
+            logger.info(f"Checkpoint at step {step}", lvl=1)
+```
+
+Console messages use `tqdm.write` while tqdm is loaded, preserving active bars. Indentation, severity, colors, and file logging still apply. Progress refreshes are not written to the log file.
+
+Use `backend="notebook"` to request widgets explicitly, or `backend="terminal"` to request text output. Keyword arguments such as `total`, `position`, `leave`, and `disable` pass directly to tqdm. For manual updates, call `logger.progress(total=100)` and use its `update()` method inside a context manager. Nested bars use tqdm's usual position handling.
 
 ## File output
 

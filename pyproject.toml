@@ -32,6 +32,8 @@ dependencies = []
 [project.optional-dependencies]
 # Color is optional: the library degrades to plain text output without it.
 color = ["colorama>=0.4; platform_system == 'Windows'"]
+progress = ["tqdm>=4.66"]
+notebook = ["tqdm>=4.66", "ipywidgets>=8"]
 dev = [
     "pytest>=7",
     "mypy>=1.8",
