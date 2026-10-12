@@ -23,6 +23,24 @@ Editing and writing rules for this repository. The file contains two independent
 
 - Write comments and docstrings in clear, precise, compact language with short sentences. Avoid undefined buzzwords and unnecessarily ornate phrasing.
 - Start a docstring with the signature and a one-line statement of purpose. Then state the conventions, assumptions, and the return value.
+- Order every docstring as: general description, then a `Parameters` section, then the remaining sections. The `Parameters` header is underlined with dashes on the next line. Each parameter is `<name> : <type>` followed by an indented description. Further sections (`Returns`, `Notes`) follow the same header-and-underline form.
+
+```
+"""
+<general description>
+
+Parameters
+----------
+<name> : <type>
+    <what it is: meaning, shape, units, conventions>
+...
+
+Returns
+-------
+<type>
+    <what it is>
+"""
+```
 - In scientific or numerical code, state the mathematical or physical setting and define notation before use. Record units, normalizations, and basis, sign, or ordering conventions explicitly.
 - Distinguish exact results from approximations, heuristics, and assumptions.
 - Comments explain reasoning, mathematics, assumptions, and non-obvious behavior. They do not restate what the code trivially does.
