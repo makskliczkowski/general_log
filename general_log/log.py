@@ -11,6 +11,9 @@ Environment variables configure defaults:
 ``PYLOGFILE``       sets a default log file (used when no ``logfile`` is passed);
 ``PYLOGLEVEL``      sets the default level (e.g. ``PYLOGLEVEL=warning``).
 
+:func:`default_log_dir` returns the per-user log directory of an application on
+Windows, macOS and Linux.
+
 Console level fields are colored per level on ANSI-capable terminals; file
 output always strips color codes.  The module is re-exported through
 ``general_log`` and stays importable as ``general_log.log``.
@@ -21,6 +24,7 @@ from __future__ import annotations
 import functools
 import getpass
 import logging
+import logging.handlers
 import os
 import platform
 import re
@@ -50,6 +54,7 @@ __all__ = [
     "log_timing_summary",
     "get_global_logger",
     "get_logger",
+    "default_log_dir",
     "ENV_LOGGER_FILE",
     "ENV_LOGGER_COLORS",
     "ENV_LOGGER_LEVEL",
@@ -62,6 +67,9 @@ ENV_LOGGER_COLORS: Final = "PYLOGCOLORS"
 ENV_LOGGER_LEVEL: Final  = "PYLOGLEVEL"
 
 DEFAULT_LOG_DIRECTORY: Final = "./log"
+
+#: Rotated copies kept next to a size-limited log file (``max_bytes``).
+LOG_BACKUPS: Final = 3
 
 #: Timestamp format for file names and console/file time fields.
 DATE_FMT: Final = "%d_%m_%Y_%H-%M-%S"
@@ -306,27 +314,61 @@ def printJust(
 # Log file plumbing
 # ---------------------------------------------------------------------------
 
-def _write_header(logfile: str, levelname: str) -> None:
-    """Write the session header block into a freshly created log file."""
+def default_log_dir(app: str) -> str:
+    """Return the per-user log directory for ``app`` without creating it.
+
+    Windows uses ``%LOCALAPPDATA%\\<app>\\logs``, macOS ``~/Library/Logs/<app>``,
+    and other systems ``$XDG_STATE_HOME/<app>/logs`` (``~/.local/state`` when
+    unset).
+
+    Args:
+        app: Application directory name, for example ``"shubbard"``.
+
+    Returns:
+        str: Absolute directory path.
+    """
+    home = os.path.expanduser("~")
+    if sys.platform == "win32":
+        base = os.environ.get("LOCALAPPDATA") or os.path.join(home, "AppData", "Local")
+        return os.path.join(base, app, "logs")
+    if sys.platform == "darwin":
+        return os.path.join(home, "Library", "Logs", app)
+    base = os.environ.get("XDG_STATE_HOME") or os.path.join(home, ".local", "state")
+    return os.path.join(base, app, "logs")
+
+
+def _write_header(logfile: str, levelname: str, append: bool = False) -> None:
+    """Write the session header block into the log file.
+
+    A fresh file gets the full block.  With ``append`` the file is kept and a
+    one-line session marker is added, so a long-lived log stays readable.
+    """
     stamp = datetime.now().strftime(DATE_FMT)
-    lines = [
-        "--------------------------------------------------",
-        "This is the log file for the current session.",
-        f"Log file created on {stamp}.",
-        f"Log level set to: {levelname}.",
-        f"Author: {getpass.getuser() or 'unknown'}",
-        f"Machine: {platform.node() or 'unknown'}",
-        f"OS: {platform.system()} {platform.release()} {platform.version()}",
-        f"Python version: {sys.version}",
-        f"Python executable: {sys.executable}",
-        f"Current working directory: {os.getcwd()}",
-        f"Log file: {logfile}",
-        f"Log level: {levelname}",
-        f"Log file created on {stamp}",
-        f"Log level set to: {levelname}",
-        "--------------------------------------------------",
-    ]
-    with open(logfile, "w", encoding="utf-8") as f:
+    if append:
+        lines = [
+            "--------------------------------------------------",
+            f"Session started {stamp} | pid {os.getpid()} | {platform.system()} {platform.release()}"
+            f" | Python {platform.python_version()} | level {levelname}",
+        ]
+    else:
+        lines = [
+            "--------------------------------------------------",
+            "This is the log file for the current session.",
+            f"Log file created on {stamp}.",
+            f"Log level set to: {levelname}.",
+            f"Author: {getpass.getuser() or 'unknown'}",
+            f"Machine: {platform.node() or 'unknown'}",
+            f"OS: {platform.system()} {platform.release()} {platform.version()}",
+            f"Python version: {sys.version}",
+            f"Python executable: {sys.executable}",
+            f"Current working directory: {os.getcwd()}",
+            f"Log file: {logfile}",
+            f"Log level: {levelname}",
+            f"Log file created on {stamp}",
+            f"Log level set to: {levelname}",
+            "--------------------------------------------------",
+        ]
+    with open(logfile, "a" if append else "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
 
 
@@ -383,6 +425,8 @@ class Logger:
         lvl: int | str | None = None,
         append_ts: bool = False,
         use_ts_in_cmd: bool = False,
+        max_bytes: int = 0,
+        console: bool = True,
     ) -> None:
         """Initialize the logger.
 
@@ -397,7 +441,13 @@ class Logger:
                 ``PYLOGLEVEL`` environment variable, then to INFO.
             append_ts: Append the timestamp to the log file name.
             use_ts_in_cmd: Include the timestamp in console output.
+            max_bytes: When positive, keep one long-lived log file: sessions
+                append to it and it rotates at this size, keeping
+                ``LOG_BACKUPS`` older copies.  ``0`` starts a fresh file.
+            console: Attach a console handler.  ``False`` gives a file-only
+                logger, for example under a curses interface.
         """
+        self.max_bytes = max(0, int(max_bytes))
         self.now      = datetime.now()
         self.now_str  = self.now.strftime(DATE_FMT)
         if lvl is None:
@@ -410,7 +460,8 @@ class Logger:
         self.logger.setLevel(self.lvl)
         self.logger.propagate = False
 
-        self._attach_console_handler(use_ts_in_cmd)
+        if console:
+            self._attach_console_handler(use_ts_in_cmd)
 
         # Log file selection: explicit ``logfile`` wins, then PYLOGFILE.
         path = logfile or os.environ.get(ENV_LOGGER_FILE)
@@ -521,14 +572,16 @@ class Logger:
 
         The base file name (from ``logfile``/``append_ts`` or the timestamp)
         is preserved.  When the directory differs from the current one, any
-        existing file handler is closed and re-created at the new path.
+        existing file handler is closed and re-created at the new path.  The
+        directory is created private (``0700``) and the file is ``0600``.  If
+        the file cannot be created, a warning is logged and the logger keeps
+        running without file output (``handler_added`` stays ``False``).
         """
         directory    = directory or DEFAULT_LOG_DIRECTORY
         new_path     = os.path.join(directory, f"{self._logfile_base}.log")
         moved        = new_path != self.logfile
         self.logfile = new_path
         self.working = False
-        os.makedirs(directory, exist_ok=True)
 
         if moved:
             for handler in list(self.logger.handlers):
@@ -540,10 +593,24 @@ class Logger:
                         self.logger.removeHandler(handler)
             self.handler_added = False
 
-        _write_header(self.logfile, self.LEVELS.get(self.lvl, "info"))
-
         if not self.handler_added:
-            fh = logging.FileHandler(self.logfile, encoding="utf-8")
+            try:
+                os.makedirs(directory, mode=0o700, exist_ok=True)
+                _write_header(self.logfile, self.LEVELS.get(self.lvl, "info"), append=self.max_bytes > 0)
+                if self.max_bytes > 0:
+                    fh: logging.FileHandler = logging.handlers.RotatingFileHandler(
+                        self.logfile, maxBytes=self.max_bytes, backupCount=LOG_BACKUPS, encoding="utf-8"
+                    )
+                else:
+                    fh = logging.FileHandler(self.logfile, encoding="utf-8")
+            except OSError as exc:
+                self.working = True
+                self._log_message(logging.WARNING, f"Log file unavailable ({exc}); continuing without file output")
+                return
+            try:
+                os.chmod(self.logfile, 0o600)
+            except OSError:
+                pass
             fh.setLevel(self.lvl)
             fh.setFormatter(StripAnsiFormatter("%(asctime)s [%(levelname)s] %(message)s", datefmt=DATE_FMT))
             self.logger.addHandler(fh)

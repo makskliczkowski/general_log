@@ -6,7 +6,7 @@ import logging
 
 import pytest
 
-from general_log import Logger
+from general_log import Logger, default_log_dir
 
 
 @pytest.fixture(autouse=True)
@@ -178,3 +178,69 @@ def test_pylogcolors_forces_color_even_with_no_color(monkeypatch, capsys):
     monkeypatch.setenv("NO_COLOR", "1")
     lg = _L(name="forcedcolor", lvl=logging.INFO, use_ts_in_cmd=False)
     assert lg.has_colors is True  # explicit override wins
+
+
+def test_default_log_dir_per_platform(monkeypatch, tmp_path):
+    """Each platform resolves its conventional per-user log directory."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    monkeypatch.setattr("sys.platform", "linux")
+    monkeypatch.delenv("XDG_STATE_HOME", raising=False)
+    assert default_log_dir("app") == str(tmp_path / ".local" / "state" / "app" / "logs")
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    assert default_log_dir("app") == str(tmp_path / "state" / "app" / "logs")
+    monkeypatch.setattr("sys.platform", "darwin")
+    assert default_log_dir("app") == str(tmp_path / "Library" / "Logs" / "app")
+    monkeypatch.setattr("sys.platform", "win32")
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "Local"))
+    assert default_log_dir("app") == str(tmp_path / "Local" / "app" / "logs")
+
+
+def test_max_bytes_appends_sessions(tmp_path, capsys):
+    """With ``max_bytes`` a second session appends instead of truncating."""
+    path = str(tmp_path / "keep.log")
+    for index, name in enumerate(("keep1", "keep2")):
+        lg = make_logger(name=name, logfile=path, max_bytes=100_000)
+        lg.info(f"session-{index}")
+        lg.close()
+    text = (tmp_path / "keep.log").read_text(encoding="utf-8")
+    assert text.count("Session started") == 2
+    assert "session-0" in text and "session-1" in text
+
+
+def test_max_bytes_rotates(tmp_path, capsys):
+    """The log rotates once it exceeds ``max_bytes``."""
+    lg = make_logger(name="rot", logfile=str(tmp_path / "rot.log"), max_bytes=1000)
+    for index in range(40):
+        lg.info(f"filler-{index:03d} " + "x" * 40)
+    lg.close()
+    assert (tmp_path / "rot.log.1").exists()
+    assert (tmp_path / "rot.log").stat().st_size <= 1000
+
+
+def test_unwritable_log_dir_degrades_to_console(tmp_path, capsys):
+    """A log directory that cannot be created is reported, not raised."""
+    blocker = tmp_path / "file"
+    blocker.write_text("not a directory", encoding="utf-8")
+    lg = make_logger(name="deny", logfile=str(blocker / "sub" / "run.log"))
+    lg.info("still-works")
+    out = capsys.readouterr().out
+    assert not lg.handler_added
+    assert "Log file unavailable" in out
+    assert "still-works" in out
+
+
+def test_console_false_is_file_only(tmp_path, capsys):
+    """``console=False`` keeps the console silent and the file complete."""
+    lg = make_logger(name="quiet", logfile=str(tmp_path / "q.log"), console=False)
+    lg.info("only-in-file")
+    lg.close()
+    assert "only-in-file" not in capsys.readouterr().out
+    assert "only-in-file" in (tmp_path / "q.log").read_text(encoding="utf-8")
+
+
+def test_log_file_is_private(tmp_path, capsys):
+    """The log file is created owner-only."""
+    lg = make_logger(name="perm", logfile=str(tmp_path / "p.log"))
+    lg.close()
+    assert (tmp_path / "p.log").stat().st_mode & 0o077 == 0

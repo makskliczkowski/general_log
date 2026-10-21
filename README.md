@@ -151,6 +151,26 @@ logger = Logger(name="app", logfile="run", append_ts=True)  # ./log/run_17_09_20
 
 The file starts with a header recording the creation time, user, machine, and Python version. ANSI codes are stripped from file output. `configure(directory)` relocates the file at runtime; `close()` flushes and detaches the handlers.
 
+The directory is created private (`0700`) and the file is `0600`. If the file cannot be created, the logger warns on the console and continues without file output; `logger.handler_added` tells you which case you are in.
+
+### Application logs
+
+`default_log_dir(app)` returns the per-user log directory without creating it:
+
+| Platform | Directory |
+| --- | --- |
+| Windows | `%LOCALAPPDATA%\<app>\logs` |
+| macOS | `~/Library/Logs/<app>` |
+| Linux and others | `$XDG_STATE_HOME/<app>/logs` (`~/.local/state/<app>/logs`) |
+
+For a long-lived application, pass `max_bytes` so sessions append to one file that rotates at that size (three older copies are kept). A session marker line separates runs. `console=False` makes the logger file-only, which is needed under a curses interface:
+
+```python
+from general_log import Logger, default_log_dir
+
+logger = Logger(name="app", logfile=f"{default_log_dir('app')}/app.log", max_bytes=1_000_000, console=False)
+```
+
 ## Colors
 
 The level field is colored per level: debug cyan, info green, warning yellow, error red, critical magenta. Message text can be colored per call:
