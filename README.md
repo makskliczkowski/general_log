@@ -231,7 +231,6 @@ from general_log.log import Logger      # direct module path
 ```bash
 pip install -e ".[dev]"
 pytest
-ruff check .
 mypy general_log
 ```
 
