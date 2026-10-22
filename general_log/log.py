@@ -431,7 +431,7 @@ class _NotebookHtmlHandler(logging.Handler):
             self.handleError(record)
 
 
-class _ProgressConsoleHandler(logging.StreamHandler[TextIO]):
+class _ProgressConsoleHandler(logging.StreamHandler):
     """Emit console records through tqdm when it is loaded, preserving active bars."""
 
     def emit(self, record: logging.LogRecord) -> None:
