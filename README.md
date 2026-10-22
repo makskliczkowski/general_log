@@ -110,7 +110,7 @@ The arrow deepens with each nesting level, so the structure of a run stays visib
 
 ## Column widths
 
-Message methods accept optional `column_width` and `align` arguments. Pass a list or tuple of values as the message. An integer gives every column the same minimum width; a sequence gives one width per column. Adjacent columns have one separating space.
+Message methods (`info`, `debug`, `warning`, `error`, `say`) accept optional `column_width`, `align`, and `separator` arguments. Pass a list or tuple of values as the message. An integer gives every column the same minimum width; a sequence gives one width per column. Adjacent columns are joined by `separator`, one space by default (e.g. `separator=" | "`).
 
 ```python
 logger.info(["arm", "energy", "variance"], column_width=(20, 14, 12))
@@ -123,7 +123,7 @@ logger.say("rbm", "saved", column_width=(20, 12))
 
 The options work with `info`, `debug`, `warning`, `error`, `exception`, `say`, and `title`. A scalar message becomes one column. With widths specified, `say` formats its arguments as one row and ignores `end`; `title` pads its generated title as one column. Column layout is preserved in console output and log files, including when tqdm bars are active. Without `column_width`, existing message formatting is unchanged.
 
-`logger.table(rows, header=None, align="left", lvl=0, color=None)` sizes the columns to the widest entry, so no widths are needed. A header is followed by a dashed rule. All rows must have the same length.
+`logger.table(rows, header=None, align="left", separator=" ", lvl=0, color=None)` sizes the columns to the widest entry, so no widths are needed. A header is followed by a dashed rule. All rows must have the same length. The table is logged by `logger.block(lines, lvl=0, log="info", color=None)`, which takes a string (split at newlines) or a list of lines and logs them as one message: the timestamp and level appear once, on the line above, and the lines are indented by `lvl` tabs without the `->` marker.
 
 ```python
 logger.table([["rbm/ite", "ns_8192"], ["rbm/iite/pow_1", "ns_8192"]], header=["arm", "sampling"])

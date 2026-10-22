@@ -67,8 +67,15 @@ def test_timing_summary_no_phases(capsys):
 def test_table_sizes_columns_to_content(capsys):
     lg = Logger(name="tbl", lvl=logging.INFO)
     lg.table([["rbm/ite", "1.5"], ["rbm/iite/pow_1", "22.25"]], header=["arm", "energy"], align=("left", "right"))
-    lines = [line.split("] ", 1)[1] for line in capsys.readouterr().out.splitlines()]
+    prefix, *lines = capsys.readouterr().out.splitlines()
+    assert prefix.endswith("[INFO] ")   # the timestamp and level appear once
     assert lines == ["arm            energy", "-------------- ------", "rbm/ite           1.5", "rbm/iite/pow_1  22.25"]
+
+
+def test_table_indents_without_arrows(capsys):
+    Logger(name="tbl3", lvl=logging.INFO).table([["a", "b"]], header=["x", "y"], lvl=1)
+    _, *lines = capsys.readouterr().out.splitlines()
+    assert lines == ["\tx y", "\t- -", "\ta b"]
 
 
 def test_table_rejects_ragged_rows():
@@ -82,3 +89,17 @@ def test_ansi_to_html_escapes_and_colors():
     from general_log.log import _ansi_to_html
 
     assert _ansi_to_html("\x1b[32mINFO\x1b[0m a<b") == '<span style="color:#2e9e4f">INFO</span> a&lt;b'
+
+
+def test_block_logs_one_prefix_for_all_lines(capsys):
+    Logger(name="blk", lvl=logging.INFO).block("first\nsecond", lvl=1)
+    prefix, *lines = capsys.readouterr().out.splitlines()
+    assert prefix.endswith("[INFO] ")
+    assert lines == ["\tfirst", "\tsecond"]
+
+
+def test_block_follows_level(capsys):
+    Logger(name="blkw", lvl=logging.WARNING).block(["hidden"])
+    assert capsys.readouterr().out == ""
+    Logger(name="blkw2", lvl=logging.WARNING).block(["shown"], log="warning")
+    assert "[WARNING]" in capsys.readouterr().out

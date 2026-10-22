@@ -7,7 +7,7 @@ process-wide :func:`get_global_logger` singleton complete the surface.
 
 Environment variables configure defaults:
 ``PYLOGCOLORS=1``   forces console colors, ``PYLOGCOLORS=0`` disables them
-                    (``NO_COLOR`` is honored; otherwise colors auto-enable on a TTY);
+                    (``NO_COLOR`` is honored; otherwise colors auto-enable on a TTY or in a Jupyter kernel);
 ``PYLOGFILE``       sets a default log file (used when no ``logfile`` is passed);
 ``PYLOGLEVEL``      sets the default level (e.g. ``PYLOGLEVEL=warning``).
 
@@ -237,11 +237,17 @@ def _colors_enabled() -> bool:
 
     ``PYLOGCOLORS`` overrides detection: falsy values (``0``, ``false``, ...)
     disable colors; any other value forces them on.  Without it, ``NO_COLOR``
-    and a non-TTY stream disable colors.
+    disables colors; a Jupyter kernel enables them (its stream is never a TTY,
+    but the HTML handler renders the codes); otherwise a non-TTY stream
+    disables them.
     """
     force = os.environ.get(ENV_LOGGER_COLORS)
     if force is not None:
         return force.strip().lower() not in {"0", "false", "no", "off"} and _enable_windows_ansi()
+    if os.environ.get("NO_COLOR") is not None:
+        return False
+    if _is_html_notebook():
+        return True
     if not _stdout_supports_color():
         return False
     return _enable_windows_ansi()
@@ -391,7 +397,8 @@ def _write_header(logfile: str, levelname: str, append: bool = False) -> None:
 _ANSI_CSS: Final[dict[int, str]] = {30: "#555555", 31: "#d1453b", 32: "#2e9e4f", 33: "#c28b00", 34: "#3b78d1", 35: "#b03fb0", 36: "#1b9aaa", 37: "#999999"}
 
 #: Notebook output style: a monospace font, so that space-padded columns line up, and no wrapping, so that rows stay rows.
-_PRE_STYLE: Final = "margin:0;font-family:Menlo,Consolas,'DejaVu Sans Mono',monospace;line-height:1.35;tab-size:4;white-space:pre"
+#: The background is reset because VS Code gives every ``<pre>`` a code-block background that hides the level colors.
+_PRE_STYLE: Final = "margin:0;padding:0;background:transparent;font-family:Menlo,Consolas,'DejaVu Sans Mono',monospace;line-height:1.35;tab-size:4;white-space:pre"
 
 _ansi_sgr: Final = re.compile(r"\x1b\[([0-9;]*)m")
 
@@ -666,14 +673,14 @@ class Logger:
             self._log_message(logging.INFO, f"Log file created: {self.logfile}")
             self._log_message(logging.INFO, f"Log level set to: {self.LEVELS.get(self.lvl, 'info')}")
         self.working = True
-
+        
     # ------------------------------------------------------------- formatting
 
     @staticmethod
-    def _format_columns(msg: object, column_width: int | Sequence[int] | None, align: str | Sequence[str]) -> str:
-        """_format_columns(msg, column_width, align): pad scalar or sequence values to minimum widths.
+    def _format_columns(msg: object, column_width: int | Sequence[int] | None, align: str | Sequence[str], separator: str = " ") -> str:
+        """_format_columns(msg, column_width, align, separator): pad scalar or sequence values to minimum widths.
 
-        Widths count characters excluding ANSI color codes. Values are never truncated.
+        Widths count characters excluding ANSI color codes. Values are never truncated. Columns are joined by ``separator``.
         A sequence supplies one value per column; a scalar supplies one column.
         """
         if column_width is None:
@@ -695,14 +702,33 @@ class Logger:
             padding = max(0, width - len(_ansi_escape.sub("", token)))
             left    = padding if alignment == "right" else padding // 2 if alignment == "center" else 0
             columns.append(" " * left + token + " " * (padding - left))
-        return " ".join(columns)
+        return separator.join(columns)
 
     @staticmethod
     def colorize(txt: object, color: str | None) -> str:
         """Wrap ``txt`` in the ANSI code for ``color`` (see :func:`colorize`)."""
         return colorize(txt, color)
 
-    def table(self, rows: Sequence[Sequence[object]], header: Sequence[object] | None = None, *, widths: int | Sequence[int] | None = None, align: str | Sequence[str] = "left", lvl: int = 0, color: str | None = None) -> None:
+    def block(self, lines: str | Sequence[object], lvl: int = 0, log: int | str | None = logging.INFO, color: str | None = None) -> None:
+        """block(lines, lvl=0, log=INFO, color=None): log several lines as one message with a single prefix.
+
+        Args:
+            lines: A string (split at newlines) or a sequence of lines; entries are ``str()``-coerced.
+            lvl: Indentation level.
+            log: Log level: ``logging`` int, name/letter shorthand, or None (INFO).
+            color: Optional color name applied to every line when console colors are on.
+
+        The timestamp and level appear once, on the line before the block; the lines follow unprefixed, so they stay
+        aligned in the console, the log file, and a Jupyter notebook (monospace HTML). Each line is indented by ``lvl``
+        tabs without the ``->`` marker used by single-line messages. The block follows the logger level and goes to
+        the log file too.
+        """
+        rows = lines.split("\n") if isinstance(lines, str) else [str(line) for line in lines]
+        if color is not None and self.has_colors:
+            rows = [self.colorize(row, color) for row in rows]
+        self.logger.log(coerce_level(log), "\n" + "\n".join("\t" * lvl + row for row in rows))
+
+    def table(self, rows: Sequence[Sequence[object]], header: Sequence[object] | None = None, *, widths: int | Sequence[int] | None = None, align: str | Sequence[str] = "left", separator: str = " ", lvl: int = 0, color: str | None = None) -> None:
         """table(rows, header=None, ...): log ``rows`` as columns sized to their widest entry.
 
         Args:
@@ -710,11 +736,12 @@ class Logger:
             header: Optional column names; logged first and followed by a dashed rule.
             widths: Optional shared column width or one width per column. If omitted, widths are calculated from the contents.
             align: Shared alignment or one of left/right/center per column.
+            separator: String between columns (default one space), e.g. ``" | "``. It also joins the dashed rule.
             lvl: Indentation level.
             color: Optional color name applied to every line.
 
-        Each row is one message, so the table follows the logger level and goes to the log file too.
-        Columns are separated by one space (see ``column_width`` of :meth:`info`). In a Jupyter notebook the lines are monospace HTML, so they align.
+        The table is logged with :meth:`block`: one INFO message, the timestamp and level once on the line before the rows.
+        Columns are separated by one space (see ``column_width`` of :meth:`info`).
         
         Example:
             logger.table(
@@ -746,8 +773,7 @@ class Logger:
             raise ValueError("widths must be non-negative integers")
         if header is not None:
             lines.insert(1, ["-" * width for width in widths])
-        for line in lines:
-            self.info(line, lvl=lvl, color=color, column_width=widths, align=align)
+        self.block([self._format_columns(line, widths, align, separator) for line in lines], lvl=lvl, color=color)
 
     @staticmethod
     def print(msg: str, lvl: int = 0) -> str:
@@ -764,7 +790,7 @@ class Logger:
         method = getattr(self.logger, self.LEVELS.get(log_level, "info"))
         method(self.print(msg, lvl))
 
-    def say(self, *args: object, end: bool = True, log: int | str | None = logging.INFO, lvl: int = 0, verbose: bool = True, color: str | None = None, column_width: int | Sequence[int] | None = None, align: str | Sequence[str] = "left") -> None:
+    def say(self, *args: object, end: bool = True, log: int | str | None = logging.INFO, lvl: int = 0, verbose: bool = True, color: str | None = None, column_width: int | Sequence[int] | None = None, align: str | Sequence[str] = "left", separator: str = " ") -> None:
         """say(*args, ...): log multiple messages, optionally as a fixed-width column row.
 
         Args:
@@ -778,48 +804,49 @@ class Logger:
             column_width: Optional shared width or one minimum width per message.
                 With this option, args form columns in a single row; ``end`` is ignored.
             align: Shared alignment or one of left/right/center per column.
+            separator: String between columns (default one space).
         """
         level = coerce_level(log)
         if not verbose or level < self.lvl:
             return
         messages = [str(arg) for arg in args]
-        combined = self._format_columns(args, column_width, align) if column_width is not None else "\n".join(messages) if end else " ".join(messages)
+        combined = self._format_columns(args, column_width, align, separator) if column_width is not None else "\n".join(messages) if end else " ".join(messages)
         if color is not None and self.has_colors:
             combined = self.colorize(combined, color)
         self._log_message(level, combined, lvl)
 
-    def info(self, msg: object, lvl: int = 0, verbose: bool = True, color: str | None = None, *, column_width: int | Sequence[int] | None = None, align: str | Sequence[str] = "left") -> None:
-        """info(msg, ...): log an informational message, optionally with fixed-width columns."""
+    def info(self, msg: object, lvl: int = 0, verbose: bool = True, color: str | None = None, *, column_width: int | Sequence[int] | None = None, align: str | Sequence[str] = "left", separator: str = " ") -> None:
+        """info(msg, ...): log an informational message, optionally with fixed-width columns joined by ``separator``."""
         if not verbose:
             return
-        msg = self._format_columns(msg, column_width, align)
+        msg = self._format_columns(msg, column_width, align, separator)
         if color is not None and self.has_colors:
             msg = self.colorize(msg, color)
         self.logger.info(self.print(str(msg), lvl))
 
-    def debug(self, msg: object, lvl: int = 0, verbose: bool = True, color: str | None = None, *, column_width: int | Sequence[int] | None = None, align: str | Sequence[str] = "left") -> None:
+    def debug(self, msg: object, lvl: int = 0, verbose: bool = True, color: str | None = None, *, column_width: int | Sequence[int] | None = None, align: str | Sequence[str] = "left", separator: str = " ") -> None:
         """debug(msg, ...): log a debug message, optionally with fixed-width columns."""
         if not verbose:
             return
-        msg = self._format_columns(msg, column_width, align)
+        msg = self._format_columns(msg, column_width, align, separator)
         if color is not None and self.has_colors:
             msg = self.colorize(msg, color)
         self.logger.debug(self.print(str(msg), lvl))
 
-    def warning(self, msg: object, lvl: int = 0, verbose: bool = True, color: str = "yellow", *, column_width: int | Sequence[int] | None = None, align: str | Sequence[str] = "left") -> None:
+    def warning(self, msg: object, lvl: int = 0, verbose: bool = True, color: str = "yellow", *, column_width: int | Sequence[int] | None = None, align: str | Sequence[str] = "left", separator: str = " ") -> None:
         """warning(msg, ...): log a warning message, optionally with fixed-width columns."""
         if not verbose:
             return
-        msg = self._format_columns(msg, column_width, align)
+        msg = self._format_columns(msg, column_width, align, separator)
         if self.has_colors:
             msg = self.colorize(msg, color)
         self.logger.warning(self.print(str(msg), lvl))
 
-    def error(self, msg: object, lvl: int = 0, verbose: bool = True, color: str = "red", *, column_width: int | Sequence[int] | None = None, align: str | Sequence[str] = "left") -> None:
+    def error(self, msg: object, lvl: int = 0, verbose: bool = True, color: str = "red", *, column_width: int | Sequence[int] | None = None, align: str | Sequence[str] = "left", separator: str = " ") -> None:
         """error(msg, ...): log an error message, optionally with fixed-width columns."""
         if not verbose:
             return
-        msg = self._format_columns(msg, column_width, align)
+        msg = self._format_columns(msg, column_width, align, separator)
         if self.has_colors:
             msg = self.colorize(msg, color)
         self.logger.error(self.print(str(msg), lvl))

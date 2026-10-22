@@ -244,3 +244,15 @@ def test_log_file_is_private(tmp_path, capsys):
     lg = make_logger(name="perm", logfile=str(tmp_path / "p.log"))
     lg.close()
     assert (tmp_path / "p.log").stat().st_mode & 0o077 == 0
+
+
+def test_html_notebook_enables_color_without_tty(monkeypatch):
+    """A Jupyter kernel stream is not a TTY, but the HTML handler renders ANSI colors."""
+    from general_log import log as _log
+
+    monkeypatch.delenv("PYLOGCOLORS", raising=False)
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    monkeypatch.setattr(_log, "_is_html_notebook", lambda: True)
+    assert _log.Logger(name="htmlcolor", lvl=logging.INFO, use_ts_in_cmd=False).has_colors is True
+    monkeypatch.setenv("NO_COLOR", "1")
+    assert _log.Logger(name="htmlnocolor", lvl=logging.INFO, use_ts_in_cmd=False).has_colors is False

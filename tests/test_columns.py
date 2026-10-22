@@ -54,3 +54,13 @@ def test_invalid_column_layouts_are_reported():
         with pytest.raises(ValueError):
             logger.info(["a", "b"], column_width=widths, align=alignment)
     logger.close()
+
+
+def test_column_separator(monkeypatch, capsys):
+    monkeypatch.setenv("PYLOGCOLORS", "0")
+    logger = Logger(name="columns-sep", use_ts_in_cmd=False)
+    logger.info(["a", "b"], column_width=(3, 3), align=("left", "right"), separator=" | ")
+    logger.table([["x", "y"]], header=["c1", "c2"], separator=" | ")
+    out = capsys.readouterr().out.splitlines()
+    assert out[0] == "[INFO] a   |   b"
+    assert out[2:] == ["c1 | c2", "-- | --", "x  | y "]
