@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import functools
 import getpass
+import html
 import logging
 import logging.handlers
 import os
@@ -265,6 +266,16 @@ def _is_interactive_notebook() -> bool:
     return shell.__class__.__name__ in ("ZMQInteractiveShell", "TerminalInteractiveShell")
 
 
+def _is_html_notebook() -> bool:
+    """Whether the shell is a Jupyter kernel that renders HTML output (not a terminal IPython)."""
+    try:
+        from IPython.core.getipython import get_ipython  # type: ignore[import-not-found]
+        shell = get_ipython()
+    except (ImportError, RuntimeError, AttributeError):
+        return False
+    return shell is not None and shell.__class__.__name__ == "ZMQInteractiveShell"
+
+
 # ---------------------------------------------------------------------------
 # Print helpers
 # ---------------------------------------------------------------------------
@@ -376,6 +387,43 @@ def _write_header(logfile: str, levelname: str, append: bool = False) -> None:
 # Logger
 # ---------------------------------------------------------------------------
 
+#: CSS colors of the ANSI foreground codes 30-37 (90-97 map to the same entries).
+_ANSI_CSS: Final[dict[int, str]] = {30: "#555555", 31: "#d1453b", 32: "#2e9e4f", 33: "#c28b00", 34: "#3b78d1", 35: "#b03fb0", 36: "#1b9aaa", 37: "#999999"}
+
+#: Notebook output style: a monospace font, so that space-padded columns line up, and no wrapping, so that rows stay rows.
+_PRE_STYLE: Final = "margin:0;font-family:Menlo,Consolas,'DejaVu Sans Mono',monospace;line-height:1.35;tab-size:4;white-space:pre"
+
+_ansi_sgr: Final = re.compile(r"\x1b\[([0-9;]*)m")
+
+
+def _ansi_to_html(text: str) -> str:
+    """HTML-escape ``text`` and turn its ANSI color sequences into ``<span>`` elements (reset closes the span)."""
+    out, last, open_span = [], 0, False
+    for match in _ansi_sgr.finditer(text):
+        out.append(html.escape(text[last:match.start()]))
+        last = match.end()
+        for code in (int(c) for c in match.group(1).split(";") if c) or [0]:
+            if open_span and code in (0, 30, 31, 32, 33, 34, 35, 36, 37, 90, 91, 92, 93, 94, 95, 96, 97):
+                out.append("</span>")
+                open_span = False
+            if code in _ANSI_CSS or code - 60 in _ANSI_CSS:
+                out.append(f'<span style="color:{_ANSI_CSS.get(code, _ANSI_CSS.get(code - 60))}">')
+                open_span = True
+    out.append(html.escape(text[last:]))
+    return "".join(out) + ("</span>" if open_span else "")
+
+
+class _NotebookHtmlHandler(logging.Handler):
+    """Emit each record as one monospace HTML block in a Jupyter output."""
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            from IPython.display import HTML, display  # type: ignore[import-not-found]
+            display(HTML(f'<pre style="{_PRE_STYLE}">{_ansi_to_html(self.format(record))}</pre>'))
+        except Exception:
+            self.handleError(record)
+
+
 class _ProgressConsoleHandler(logging.StreamHandler[TextIO]):
     """Emit console records through tqdm when it is loaded, preserving active bars."""
 
@@ -404,7 +452,7 @@ class Logger:
     LEVELS_R: Final[dict[str, int]] = _LEVELS_R
 
     #: Shared console handler across all Logger instances in notebook mode.
-    _shared_console_handler: logging.StreamHandler[TextIO] | None = None
+    _shared_console_handler: logging.Handler | None = None
 
     class _ColoredLevelFormatter(logging.Formatter):
         """Formatter wrapping the levelname field in a per-level ANSI color."""
@@ -520,9 +568,9 @@ class Logger:
         """
         stream = _console_stream()
 
-        def make_handler() -> logging.StreamHandler[TextIO]:
-            formatter = self._console_formatter(use_timestamp)
-            handler: logging.StreamHandler[TextIO] = _ProgressConsoleHandler(stream)
+        def make_handler() -> logging.Handler:
+            formatter                   = self._console_formatter(use_timestamp)
+            handler: logging.Handler    = _NotebookHtmlHandler() if _is_html_notebook() else _ProgressConsoleHandler(stream)
             handler.setLevel(self.lvl)
             handler.setFormatter(formatter)
             return handler
@@ -653,6 +701,53 @@ class Logger:
     def colorize(txt: object, color: str | None) -> str:
         """Wrap ``txt`` in the ANSI code for ``color`` (see :func:`colorize`)."""
         return colorize(txt, color)
+
+    def table(self, rows: Sequence[Sequence[object]], header: Sequence[object] | None = None, *, widths: int | Sequence[int] | None = None, align: str | Sequence[str] = "left", lvl: int = 0, color: str | None = None) -> None:
+        """table(rows, header=None, ...): log ``rows`` as columns sized to their widest entry.
+
+        Args:
+            rows: One sequence of values per row, all of the same length; values are ``str()``-coerced.
+            header: Optional column names; logged first and followed by a dashed rule.
+            widths: Optional shared column width or one width per column. If omitted, widths are calculated from the contents.
+            align: Shared alignment or one of left/right/center per column.
+            lvl: Indentation level.
+            color: Optional color name applied to every line.
+
+        Each row is one message, so the table follows the logger level and goes to the log file too.
+        Columns are separated by one space (see ``column_width`` of :meth:`info`). In a Jupyter notebook the lines are monospace HTML, so they align.
+        
+        Example:
+            logger.table(
+                rows=[["Alice", 30], ["Bob", 25]],
+                header=["Name", "Age"],
+                widths=[10, 3],
+                align=["left", "right"],
+                lvl=1,
+                color="green"
+            )
+        """
+        lines = [list(map(str, row)) for row in ([header] if header is not None else []) + list(rows)]
+        if len({len(line) for line in lines}) > 1:
+            raise ValueError("every table row must have as many entries as the header")
+        if not lines:
+            return
+        column_count = len(lines[0])
+        
+        if widths is None:
+            widths = [max(len(_ansi_escape.sub("", line[c])) for line in lines) for c in range(column_count)]
+        elif isinstance(widths, int) and not isinstance(widths, bool):
+            widths = [widths] * column_count
+        else:
+            widths = list(widths)
+            
+        if len(widths) != column_count:
+            raise ValueError("widths must have one entry per table column")
+        if any(not isinstance(width, int) or isinstance(width, bool) or width < 0 for width in widths):
+            raise ValueError("widths must be non-negative integers")
+        if header is not None:
+            lines.insert(1, ["-" * width for width in widths])
+        for line in lines:
+            self.info(line, lvl=lvl, color=color, column_width=widths, align=align)
 
     @staticmethod
     def print(msg: str, lvl: int = 0) -> str:

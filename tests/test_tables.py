@@ -62,3 +62,23 @@ def test_timing_summary_no_phases(capsys):
     log_timing_summary(lg, {})
     out = capsys.readouterr().out
     assert "No phases timed" in out
+
+
+def test_table_sizes_columns_to_content(capsys):
+    lg = Logger(name="tbl", lvl=logging.INFO)
+    lg.table([["rbm/ite", "1.5"], ["rbm/iite/pow_1", "22.25"]], header=["arm", "energy"], align=("left", "right"))
+    lines = [line.split("] ", 1)[1] for line in capsys.readouterr().out.splitlines()]
+    assert lines == ["arm            energy", "-------------- ------", "rbm/ite           1.5", "rbm/iite/pow_1  22.25"]
+
+
+def test_table_rejects_ragged_rows():
+    import pytest
+
+    with pytest.raises(ValueError):
+        Logger(name="tbl2", lvl=logging.INFO).table([["a", "b"], ["c"]])
+
+
+def test_ansi_to_html_escapes_and_colors():
+    from general_log.log import _ansi_to_html
+
+    assert _ansi_to_html("\x1b[32mINFO\x1b[0m a<b") == '<span style="color:#2e9e4f">INFO</span> a&lt;b'

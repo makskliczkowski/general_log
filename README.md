@@ -123,6 +123,14 @@ logger.say("rbm", "saved", column_width=(20, 12))
 
 The options work with `info`, `debug`, `warning`, `error`, `exception`, `say`, and `title`. A scalar message becomes one column. With widths specified, `say` formats its arguments as one row and ignores `end`; `title` pads its generated title as one column. Column layout is preserved in console output and log files, including when tqdm bars are active. Without `column_width`, existing message formatting is unchanged.
 
+`logger.table(rows, header=None, align="left", lvl=0, color=None)` sizes the columns to the widest entry, so no widths are needed. A header is followed by a dashed rule. All rows must have the same length.
+
+```python
+logger.table([["rbm/ite", "ns_8192"], ["rbm/iite/pow_1", "ns_8192"]], header=["arm", "sampling"])
+```
+
+In a Jupyter kernel (not a terminal IPython) every record is shown as one monospace HTML block with its colors, because notebook front ends draw plain stream output in a proportional font and padded columns then do not line up. Log files and terminals are unchanged.
+
 ## Progress bars
 
 `logger.progress(...)` returns a native `tqdm` bar. The default `backend="auto"` selects notebook widgets when available and a terminal bar otherwise. Install `general-log[progress]` for tqdm or `general-log[notebook]` for tqdm and ipywidgets.
