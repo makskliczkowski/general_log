@@ -131,6 +131,8 @@ logger.table([["rbm/ite", "ns_8192"], ["rbm/iite/pow_1", "ns_8192"]], header=["a
 
 In a Jupyter kernel (not a terminal IPython) every record is shown as one monospace HTML block with its colors, because notebook front ends draw plain stream output in a proportional font and padded columns then do not line up. Log files and terminals are unchanged.
 
+The many blocks cannot be collapsed. Create the logger with `get_global_logger(html=False)` (or `Logger(html=False)`, or call `logger.set_html(False)` later) to write plain stream text in a notebook instead: Jupyter joins it into one output that scrolls and collapses, at the price of a proportional font.
+
 ## Progress bars
 
 `logger.progress(...)` returns a native `tqdm` bar. The default `backend="auto"` selects notebook widgets when available and a terminal bar otherwise. Install `general-log[progress]` for tqdm or `general-log[notebook]` for tqdm and ipywidgets.

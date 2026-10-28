@@ -256,3 +256,21 @@ def test_html_notebook_enables_color_without_tty(monkeypatch):
     assert _log.Logger(name="htmlcolor", lvl=logging.INFO, use_ts_in_cmd=False).has_colors is True
     monkeypatch.setenv("NO_COLOR", "1")
     assert _log.Logger(name="htmlnocolor", lvl=logging.INFO, use_ts_in_cmd=False).has_colors is False
+
+
+def test_html_false_uses_a_plain_stream_handler_in_a_notebook(monkeypatch):
+    """In a Jupyter kernel html=True shows records as HTML blocks; html=False and set_html switch to the stream handler."""
+    from general_log import log as _log
+
+    monkeypatch.setattr(_log, "_is_html_notebook", lambda: True)
+    monkeypatch.setattr(_log, "_is_interactive_notebook", lambda: True)
+    monkeypatch.setattr(_log.Logger, "_shared_console_handler", None)
+    kinds = lambda logger: [type(h) for h in logger.logger.handlers]
+    logger = _log.Logger(name="htmlswitch", lvl=logging.INFO, use_ts_in_cmd=False)
+    assert kinds(logger) == [_log._NotebookHtmlHandler]
+    logger.set_html(False)
+    assert kinds(logger) == [_log._ProgressConsoleHandler]
+    logger.set_html(True)
+    assert kinds(logger) == [_log._NotebookHtmlHandler]
+    plain = _log.Logger(name="htmlplain", lvl=logging.INFO, use_ts_in_cmd=False, html=False)
+    assert kinds(plain) == [_log._ProgressConsoleHandler]

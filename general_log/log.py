@@ -475,13 +475,14 @@ class Logger:
 
     def __init__(
         self,
-        name: str = "Global",
-        logfile: str | None = None,
-        lvl: int | str | None = None,
-        append_ts: bool = False,
-        use_ts_in_cmd: bool = False,
-        max_bytes: int = 0,
-        console: bool = True,
+        name            : str = "Global",
+        logfile         : str | None = None,
+        lvl             : int | str | None = None,
+        append_ts       : bool = False,
+        use_ts_in_cmd   : bool = False,
+        max_bytes       : int = 0,
+        console         : bool = True,
+        html            : bool = True,
     ) -> None:
         """Initialize the logger.
 
@@ -501,6 +502,11 @@ class Logger:
                 ``LOG_BACKUPS`` older copies.  ``0`` starts a fresh file.
             console: Attach a console handler.  ``False`` gives a file-only
                 logger, for example under a curses interface.
+            html: In a Jupyter kernel, show each record as an HTML block
+                (aligned columns, one output per record).  ``False`` writes
+                plain text to the stream instead, which Jupyter joins into one
+                output that can be scrolled or collapsed.  Terminals and files
+                are not affected.
         """
         self.max_bytes = max(0, int(max_bytes))
         self.now      = datetime.now()
@@ -510,6 +516,9 @@ class Logger:
         self.lvl            = coerce_level(lvl)
         self.handler_added  = False
         self.has_colors     = _colors_enabled()
+        self.html           = html
+        self._console       = console
+        self._use_ts        = use_ts_in_cmd
 
         self.logger           = logging.getLogger(name or __name__)
         self.logger.setLevel(self.lvl)
@@ -548,6 +557,20 @@ class Logger:
         for handler in self.logger.handlers:
             handler.setLevel(self.lvl)
 
+    def set_html(self, html: bool) -> None:
+        """Switch the console output of a Jupyter kernel between HTML blocks (``True``) and plain stream text (``False``, collapsible).
+
+        Replaces this logger's console handler; it has no effect on a file-only logger or outside a notebook.
+        """
+        self.html = html
+        if not self._console:
+            return
+        for handler in list(self.logger.handlers):
+            if isinstance(handler, (_NotebookHtmlHandler, _ProgressConsoleHandler)):
+                self.logger.removeHandler(handler)
+        Logger._shared_console_handler = None
+        self._attach_console_handler(self._use_ts)
+
     @property
     def level(self) -> int:
         """The current minimum logging level as a ``logging`` int."""
@@ -577,15 +600,19 @@ class Logger:
 
         def make_handler() -> logging.Handler:
             formatter                   = self._console_formatter(use_timestamp)
-            handler: logging.Handler    = _NotebookHtmlHandler() if _is_html_notebook() else _ProgressConsoleHandler(stream)
+            handler: logging.Handler    = _NotebookHtmlHandler() if self.html and _is_html_notebook() else _ProgressConsoleHandler(stream)
             handler.setLevel(self.lvl)
             handler.setFormatter(formatter)
             return handler
 
         if _is_interactive_notebook():
-            if Logger._shared_console_handler is None:
-                Logger._shared_console_handler = make_handler()
-            self.logger.addHandler(Logger._shared_console_handler)
+            shared = Logger._shared_console_handler
+            if shared is not None and isinstance(shared, _NotebookHtmlHandler) != (self.html and _is_html_notebook()):
+                self.logger.removeHandler(shared)           # created with the other html setting
+                shared = None
+            if shared is None:
+                shared = Logger._shared_console_handler = make_handler()
+            self.logger.addHandler(shared)
             return
 
         bound_to_current = [
@@ -1098,6 +1125,13 @@ _G_LOGGER_PID: int | None = None
 _G_LOCK = threading.Lock()
 
 
+def _apply_html(logger: Logger, kwargs: Mapping[str, Any]) -> Logger:
+    """Apply an explicit ``html`` setting of ``get_global_logger`` to the cached logger, so re-running a notebook cell with ``html=False`` takes effect."""
+    if "html" in kwargs and kwargs["html"] != logger.html:
+        logger.set_html(kwargs["html"])
+    return logger
+
+
 def get_global_logger(**kwargs: Any) -> Logger:
     """Return one ``Logger`` per process (PID), safe across threads and forks.
 
@@ -1108,7 +1142,7 @@ def get_global_logger(**kwargs: Any) -> Logger:
 
     Args:
         **kwargs: Forwarded to :class:`Logger`; supports ``name``, ``lvl``,
-            ``append_ts``, ``use_ts_in_cmd``, ``logfile``.
+            ``append_ts``, ``use_ts_in_cmd``, ``logfile``, ``html``.
 
     Returns:
         Logger: The process-wide logger instance.
@@ -1117,11 +1151,11 @@ def get_global_logger(**kwargs: Any) -> Logger:
     pid = os.getpid()
 
     if _G_LOGGER is not None and _G_LOGGER_PID == pid:
-        return _G_LOGGER
+        return _apply_html(_G_LOGGER, kwargs)
 
     with _G_LOCK:
         if _G_LOGGER is not None and _G_LOGGER_PID == pid:
-            return _G_LOGGER
+            return _apply_html(_G_LOGGER, kwargs)
 
         logger = Logger(
             name=kwargs.get("name", "Global"),
@@ -1129,6 +1163,7 @@ def get_global_logger(**kwargs: Any) -> Logger:
             append_ts=kwargs.get("append_ts", True),
             use_ts_in_cmd=kwargs.get("use_ts_in_cmd", True),
             logfile=kwargs.get("logfile"),
+            html=kwargs.get("html", True),
         )
 
         # Banner once per program; the sentinel survives fork() so workers
@@ -1148,7 +1183,7 @@ def get_logger(**kwargs: Any) -> Logger:
 
     Args:
         **kwargs: Forwarded to :class:`Logger`; supports ``name``, ``lvl``,
-            ``append_ts``, ``use_ts_in_cmd``, ``logfile``.
+            ``append_ts``, ``use_ts_in_cmd``, ``logfile``, ``html``.
 
     Returns:
         Logger: A new Logger instance.
@@ -1159,6 +1194,7 @@ def get_logger(**kwargs: Any) -> Logger:
         append_ts=kwargs.get("append_ts", True),
         use_ts_in_cmd=kwargs.get("use_ts_in_cmd", True),
         logfile=kwargs.get("logfile"),
+        html=kwargs.get("html", True),
     )
 
 
