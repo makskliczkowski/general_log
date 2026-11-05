@@ -145,7 +145,16 @@ class Colors:
         return len(str(self))
 
 
-class StripAnsiFormatter(logging.Formatter):
+class _BareFormatter(logging.Formatter):
+    """Formatter that writes only the message for records logged with ``bare=True`` (no level, no time stamp)."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        if getattr(record, "bare", False):
+            return record.getMessage()
+        return super().format(record)
+
+
+class StripAnsiFormatter(_BareFormatter):
     """Formatter that removes ANSI color sequences from log records."""
 
     def format(self, record: logging.LogRecord) -> str:
@@ -461,7 +470,7 @@ class Logger:
     #: Shared console handler across all Logger instances in notebook mode.
     _shared_console_handler: logging.Handler | None = None
 
-    class _ColoredLevelFormatter(logging.Formatter):
+    class _ColoredLevelFormatter(_BareFormatter):
         """Formatter wrapping the levelname field in a per-level ANSI color."""
 
         def format(self, record: logging.LogRecord) -> str:
@@ -584,7 +593,7 @@ class Logger:
     def _console_formatter(self, use_timestamp: bool) -> logging.Formatter:
         """Console formatter; with colors on, the level field is colored."""
         fmt = "%(asctime)s [%(levelname)s] %(message)s" if use_timestamp else "[%(levelname)s] %(message)s"
-        formatter_cls = self._ColoredLevelFormatter if self.has_colors else logging.Formatter
+        formatter_cls = self._ColoredLevelFormatter if self.has_colors else _BareFormatter
         return formatter_cls(fmt, datefmt=DATE_FMT if use_timestamp else None)
 
     def _attach_console_handler(self, use_timestamp: bool) -> None:
@@ -812,12 +821,12 @@ class Logger:
 
     # ------------------------------------------------------------- emit
 
-    def _log_message(self, log_level: int, msg: str, lvl: int = 0) -> None:
-        """Route ``msg`` to the wrapped logger at ``log_level`` with indentation."""
+    def _log_message(self, log_level: int, msg: str, lvl: int = 0, bare: bool = False) -> None:
+        """Route ``msg`` to the wrapped logger at ``log_level`` with indentation; ``bare`` drops level and time stamp."""
         method = getattr(self.logger, self.LEVELS.get(log_level, "info"))
-        method(self.print(msg, lvl))
+        method(self.print(msg, lvl), extra={"bare": bare})
 
-    def say(self, *args: object, end: bool = True, log: int | str | None = logging.INFO, lvl: int = 0, verbose: bool = True, color: str | None = None, column_width: int | Sequence[int] | None = None, align: str | Sequence[str] = "left", separator: str = " ") -> None:
+    def say(self, *args: object, end: bool = True, log: int | str | None = logging.INFO, lvl: int = 0, verbose: bool = True, color: str | None = None, column_width: int | Sequence[int] | None = None, align: str | Sequence[str] = "left", separator: str = " ", bare: bool = False) -> None:
         """say(*args, ...): log multiple messages, optionally as a fixed-width column row.
 
         Args:
@@ -832,6 +841,7 @@ class Logger:
                 With this option, args form columns in a single row; ``end`` is ignored.
             align: Shared alignment or one of left/right/center per column.
             separator: String between columns (default one space).
+            bare: Write only the message, without level and time stamp (for lines other tools parse).
         """
         level = coerce_level(log)
         if not verbose or level < self.lvl:
@@ -840,43 +850,43 @@ class Logger:
         combined = self._format_columns(args, column_width, align, separator) if column_width is not None else "\n".join(messages) if end else " ".join(messages)
         if color is not None and self.has_colors:
             combined = self.colorize(combined, color)
-        self._log_message(level, combined, lvl)
+        self._log_message(level, combined, lvl, bare)
 
-    def info(self, msg: object, lvl: int = 0, verbose: bool = True, color: str | None = None, *, column_width: int | Sequence[int] | None = None, align: str | Sequence[str] = "left", separator: str = " ") -> None:
-        """info(msg, ...): log an informational message, optionally with fixed-width columns joined by ``separator``."""
+    def info(self, msg: object, lvl: int = 0, verbose: bool = True, color: str | None = None, *, column_width: int | Sequence[int] | None = None, align: str | Sequence[str] = "left", separator: str = " ", bare: bool = False) -> None:
+        """info(msg, ...): log an informational message, optionally with fixed-width columns joined by ``separator``; ``bare=True`` writes only the message."""
         if not verbose:
             return
         msg = self._format_columns(msg, column_width, align, separator)
         if color is not None and self.has_colors:
             msg = self.colorize(msg, color)
-        self.logger.info(self.print(str(msg), lvl))
+        self.logger.info(self.print(str(msg), lvl), extra={"bare": bare})
 
-    def debug(self, msg: object, lvl: int = 0, verbose: bool = True, color: str | None = None, *, column_width: int | Sequence[int] | None = None, align: str | Sequence[str] = "left", separator: str = " ") -> None:
+    def debug(self, msg: object, lvl: int = 0, verbose: bool = True, color: str | None = None, *, column_width: int | Sequence[int] | None = None, align: str | Sequence[str] = "left", separator: str = " ", bare: bool = False) -> None:
         """debug(msg, ...): log a debug message, optionally with fixed-width columns."""
         if not verbose:
             return
         msg = self._format_columns(msg, column_width, align, separator)
         if color is not None and self.has_colors:
             msg = self.colorize(msg, color)
-        self.logger.debug(self.print(str(msg), lvl))
+        self.logger.debug(self.print(str(msg), lvl), extra={"bare": bare})
 
-    def warning(self, msg: object, lvl: int = 0, verbose: bool = True, color: str = "yellow", *, column_width: int | Sequence[int] | None = None, align: str | Sequence[str] = "left", separator: str = " ") -> None:
+    def warning(self, msg: object, lvl: int = 0, verbose: bool = True, color: str = "yellow", *, column_width: int | Sequence[int] | None = None, align: str | Sequence[str] = "left", separator: str = " ", bare: bool = False) -> None:
         """warning(msg, ...): log a warning message, optionally with fixed-width columns."""
         if not verbose:
             return
         msg = self._format_columns(msg, column_width, align, separator)
         if self.has_colors:
             msg = self.colorize(msg, color)
-        self.logger.warning(self.print(str(msg), lvl))
+        self.logger.warning(self.print(str(msg), lvl), extra={"bare": bare})
 
-    def error(self, msg: object, lvl: int = 0, verbose: bool = True, color: str = "red", *, column_width: int | Sequence[int] | None = None, align: str | Sequence[str] = "left", separator: str = " ") -> None:
+    def error(self, msg: object, lvl: int = 0, verbose: bool = True, color: str = "red", *, column_width: int | Sequence[int] | None = None, align: str | Sequence[str] = "left", separator: str = " ", bare: bool = False) -> None:
         """error(msg, ...): log an error message, optionally with fixed-width columns."""
         if not verbose:
             return
         msg = self._format_columns(msg, column_width, align, separator)
         if self.has_colors:
             msg = self.colorize(msg, color)
-        self.logger.error(self.print(str(msg), lvl))
+        self.logger.error(self.print(str(msg), lvl), extra={"bare": bare})
 
     def exception(self, msg: object = "", lvl: int = 0, *, column_width: int | Sequence[int] | None = None, align: str | Sequence[str] = "left", **kwargs: Any) -> None:
         """exception(msg='', ...): log an optional column row with the current traceback.

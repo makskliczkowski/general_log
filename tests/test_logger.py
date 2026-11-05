@@ -123,6 +123,21 @@ def test_configure_relocates_file(tmp_path, monkeypatch, capsys):
     assert "after-move" in moved.read_text(encoding="utf-8")
 
 
+def test_bare_messages_have_no_level_or_time_stamp(tmp_path, capsys, monkeypatch):
+    """bare=True writes only the message, on the console and in the file, so other tools can parse the line."""
+    monkeypatch.chdir(tmp_path)
+    lg = Logger(name="bare", lvl=logging.DEBUG, use_ts_in_cmd=True, logfile="run", append_ts=False)
+    lg.info("shub: data=/x", bare=True)
+    lg.say("== exit", bare=True)
+    lg.info("normal")
+    lg.close()
+    lines = capsys.readouterr().out.splitlines()
+    assert "shub: data=/x" in lines and "== exit" in lines
+    assert any("[INFO] normal" in line for line in lines)
+    text = (tmp_path / "log" / "run.log").read_text(encoding="utf-8").splitlines()
+    assert "shub: data=/x" in text and any(line.endswith("[INFO] normal") for line in text)
+
+
 def test_say_joins_and_colorizes(capsys):
     logger = make_logger()
     logger.say("a", "b", end=False)

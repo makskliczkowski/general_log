@@ -27,11 +27,17 @@ logger.info("Hello, world!")
 
 Console output includes a timestamp by default and a colored level name:
 
-```
+```bash
 17_09_2026_17-19-34 [INFO] Hello, world!
 ```
 
-Pass `use_ts_in_cmd=False` to drop the timestamp. To create a standalone instance instead, use `Logger` directly:
+Pass `use_ts_in_cmd=False` to drop the timestamp. Pass `bare=True` to `info`, `debug`, `warning`, `error` or `say` to write only the message, without level and timestamp, on the console and in the log file; use it for lines that other tools parse from their first character:
+
+```python
+logger.info("shub: data=/scratch/run_42", bare=True)    # shub: data=/scratch/run_42
+```
+
+To create a standalone instance instead, use `Logger` directly:
 
 ```python
 from general_log import Logger
