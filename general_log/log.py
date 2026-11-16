@@ -33,7 +33,8 @@ import sys
 import threading
 import time
 import traceback
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from datetime import datetime
 from typing import Any, Final, Literal, TextIO, TypeVar
 
@@ -53,6 +54,7 @@ __all__ = [
     "printDictionary",
     "print_arguments",
     "log_timing_summary",
+    "Timer",
     "get_global_logger",
     "get_logger",
     "default_log_dir",
@@ -958,6 +960,30 @@ class Logger:
 
         return wrapper
 
+    @contextmanager
+    def timed(self, name: str, lvl: int = 0, *, verbose: bool = True, color: str | None = None) -> Iterator[None]:
+        """Time a block and log its start, end and failure.
+
+        Emits ``name | started`` before the block, ``name | finished in X s``
+        after it, and ``name | failed after X s`` at error level when the block
+        raises; the exception propagates unchanged.
+
+        Args:
+            name: Label of the block.
+            lvl: Indentation level of the records.
+            verbose: Emit the records only when true.
+            color: Color of the start and finish records; the failure record is red.
+        """
+        self.info(f"{name} | started", lvl, verbose, color)
+        started = time.perf_counter()
+        try:
+            yield
+        except BaseException:
+            self.error(f"{name} | failed after {time.perf_counter() - started:.3f} s", lvl, verbose, color="red")
+            raise
+        else:
+            self.info(f"{name} | finished in {time.perf_counter() - started:.3f} s", lvl, verbose, color)
+
     # ------------------------------------------------------------- lifecycle
 
     def close(self) -> None:
@@ -1024,6 +1050,24 @@ def print_arguments(
 # ---------------------------------------------------------------------------
 # Timing summary
 # ---------------------------------------------------------------------------
+
+class Timer(dict):
+    """Accumulating wall time per named phase.
+
+    Each ``with timer(name):`` adds one more interval to ``name``, so a phase
+    entered several times (per step, per increment) reports its total. The dict
+    is the ``phase_durations`` argument of :func:`log_timing_summary`.
+    """
+
+    @contextmanager
+    def __call__(self, name: str) -> Iterator[None]:
+        """Add the duration of the block to ``name``; a failing block still counts."""
+        started = time.perf_counter()
+        try:
+            yield
+        finally:
+            self[name] = self.get(name, 0.0) + time.perf_counter() - started
+
 
 def _isclose(a: float, b: float, rtol: float = 1e-3, atol: float = 1e-4) -> bool:
     """Sameness check within relative/absolute tolerance (no numpy)."""

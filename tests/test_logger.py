@@ -85,6 +85,44 @@ def test_timing_decorator_logs_debug(capsys):
     assert "Finished 'work' in" in out
 
 
+def test_timed_context_logs_start_and_finish(capsys):
+    logger = make_logger()
+    with logger.timed("stage", lvl=1):
+        pass
+    out = capsys.readouterr().out
+    assert "stage | started" in out
+    assert "stage | finished in" in out
+
+
+def test_timed_context_labels_failure_and_reraises(capsys):
+    logger = make_logger()
+    with pytest.raises(ValueError):
+        with logger.timed("stage"):
+            raise ValueError("boom")
+    out = capsys.readouterr().out
+    assert "stage | failed after" in out
+
+
+def test_timed_verbose_false_is_silent(capsys):
+    logger = make_logger()
+    with logger.timed("stage", verbose=False):
+        pass
+    assert "stage" not in capsys.readouterr().out
+
+
+def test_timer_accumulates_repeated_phases():
+    from general_log import Timer
+
+    timer = Timer()
+    for _ in range(3):
+        with timer("train"):
+            pass
+    with timer("rotate"):
+        pass
+    assert set(timer) == {"train", "rotate"}
+    assert timer["train"] > 0.0 and timer["rotate"] > 0.0
+
+
 def test_file_output_and_header(tmp_path, capsys, monkeypatch):
     """A logfile argument writes to ./<dir>/<name>.log with the header."""
     monkeypatch.chdir(tmp_path)

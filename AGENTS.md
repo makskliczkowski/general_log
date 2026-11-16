@@ -141,6 +141,8 @@ Every message accepts `lvl` (indentation), `color`, and, where listed in the sig
 | --- | --- |
 | `logger.progress(iterable=None, backend="auto", **tqdm_kwargs)` | Native tqdm bar; `set_postfix`, `update`, context manager. |
 | `logger.timing` | Decorator that logs start and duration. |
+| `logger.timed(name, lvl=0, ...)` | Context manager that logs start, duration and failure. |
+| `Timer()` | Accumulating wall time per named phase; feeds `log_timing_summary`. |
 | `log_timing_summary(logger, phases, total_duration=, ...)` | Phase table with a Total row and a mismatch warning. |
 | `print_arguments(parser, logger=None, ...)` | Argparse options as a table. |
 | `logger.configure(directory)` | Move file output at runtime. |

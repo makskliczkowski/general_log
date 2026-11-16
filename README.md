@@ -96,6 +96,13 @@ def train():
 
 It emits `Starting 'train'...` before the call and `Finished 'train' in 3.2 seconds.` after.
 
+`logger.timed(name)` is the context-manager form, for a block that is not a function. It logs `name | started`, then `name | finished in X s`, or `name | failed after X s` at error level and re-raises:
+
+```python
+with logger.timed("train"):
+    ...
+```
+
 ## Indentation
 
 Logging methods accept an `lvl` argument that indents the line:
@@ -213,6 +220,15 @@ printDictionary({"lr": 1e-3, "epochs": 10})          # "lr: 1e-3, epochs: 10"
 
 ```python
 log_timing_summary(logger, {"compile": 1.2, "train": 9.8}, total_duration=11.2)
+```
+
+`Timer` collects those phase durations. A phase entered several times reports its total, and the dict is the first argument of `log_timing_summary`:
+
+```python
+timer = Timer()
+with timer("train"):
+    ...
+log_timing_summary(logger, timer, total_duration=elapsed)
 ```
 
 ## Environment variables
