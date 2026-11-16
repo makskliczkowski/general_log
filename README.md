@@ -234,6 +234,8 @@ from general_log import Logger          # canonical
 from general_log.log import Logger      # direct module path
 ```
 
+Section 3 of `AGENTS.md` lists every public function, `Logger` method and environment variable by task.
+
 ## Development
 
 ```bash

@@ -99,3 +99,70 @@ Returns
 - Prefer Mermaid diagrams for flows, phase spaces, and conceptual schemas when a diagram clarifies complex relationships.
 - Render math inside Mermaid flowchart and sequence diagrams by wrapping the expression in `$$...$$` inside the node or edge label (KaTeX, Mermaid 10.9+). Do not use single `$...$`.
 - I don't care if the line is longer, as long as it's not too long you can keep inline - I prefer this rather than very long files...
+
+## 3. API index
+
+Use these before writing a logger or a print helper. Both import paths expose the same objects:
+`general_log` and `general_log.log`.
+
+### Construction and levels
+
+| Function or attribute | Use |
+| --- | --- |
+| `get_global_logger(**kwargs)` | One process-wide logger; first call constructs it. |
+| `get_logger(**kwargs)` | New uncached `Logger`. |
+| `Logger(name, logfile=, lvl=, append_ts=, use_ts_in_cmd=, max_bytes=, console=, html=)` | Standalone logger. |
+| `logger.set_level(level)`, `logger.level`, `logger.verbose` | Change and inspect the level. |
+| `coerce_level(level)` | Convert int, name or letter to a logging int. |
+| `logger.set_html(bool)` | Switch notebook HTML blocks on or off. |
+| `logger.handler_added` | Whether file output was attached. |
+
+`PYLOGLEVEL`, `PYLOGFILE`, `PYLOGCOLORS` and `NO_COLOR` set the level, file, colors and color opt-out.
+
+### Messages
+
+| Method or attribute | Use |
+| --- | --- |
+| `logger.debug`, `info`, `warning`, `error`, `exception` | One message at that level. |
+| `logger.say(*args, end=True, ...)` | Several messages as lines, or joined with spaces. |
+| `logger.print(msg, lvl=0)` | Formatted text without a log level. |
+| `logger.title(text, desired_size=50, fill="=", ...)` | Centered title. |
+| `logger.block(lines, lvl=0, log="info", ...)` | Several lines with one timestamp and level. |
+| `logger.table(rows, header=None, align="left", separator=" ", ...)` | Auto-width columns with a header rule. |
+| `logger.breakline(n)` | `n` blank lines. |
+| `logger.colorize(text, color)` | Wrap text in an ANSI color. |
+
+Every message accepts `lvl` (indentation), `color`, and, where listed in the signature, `bare=True`,
+`column_width`, `align` and `separator`. `bare=True` writes only the message, for lines other tools parse.
+
+### Progress, timing and files
+
+| Function or attribute | Use |
+| --- | --- |
+| `logger.progress(iterable=None, backend="auto", **tqdm_kwargs)` | Native tqdm bar; `set_postfix`, `update`, context manager. |
+| `logger.timing` | Decorator that logs start and duration. |
+| `log_timing_summary(logger, phases, total_duration=, ...)` | Phase table with a Total row and a mismatch warning. |
+| `print_arguments(parser, logger=None, ...)` | Argparse options as a table. |
+| `logger.configure(directory)` | Move file output at runtime. |
+| `logger.close()` | Flush and detach handlers. |
+| `with logger:` | Context manager that closes on exit. |
+| `default_log_dir(app)` | Per-user log directory for the platform. |
+
+### Print helpers
+
+| Function | Use |
+| --- | --- |
+| `printV(what, v=True, tabulators=0)` | Print only when a flag is true. |
+| `printJust(stream, elements, width, ...)` | Fixed-width columns. |
+| `printDictionary(mapping)` | `"key: value, ..."` one-liner. |
+| `print_tab(lvl)` | Indentation string. |
+| `Colors(name)` | Callable ANSI color wrapper. |
+| `StripAnsiFormatter` | Logging formatter that removes ANSI codes. |
+
+### Formatted output
+
+- `logger.table` sizes columns to the widest entry. `column_width` in `info`, `say` and the other message
+  methods gives minimum widths instead, with `align` per column and `separator` between them.
+- File output strips ANSI codes, creates the directory private and rotates when `max_bytes` is set.
+- In a Jupyter kernel each record is one HTML block by default. `html=False` writes plain stream text that
+  collapses and scrolls.
