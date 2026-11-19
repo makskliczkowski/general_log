@@ -493,7 +493,7 @@ class Logger:
         use_ts_in_cmd   : bool = False,
         max_bytes       : int = 0,
         console         : bool = True,
-        html            : bool = True,
+        html            : bool = False,
     ) -> None:
         """Initialize the logger.
 
