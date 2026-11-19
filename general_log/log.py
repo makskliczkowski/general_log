@@ -1252,6 +1252,9 @@ def get_logger(**kwargs: Any) -> Logger:
     )
 
 
+from .runtime import SlurmMonitor, memory_usage_gb, peak_memory_gb  # noqa: E402,F401
+
+
 # ---------------------------------------------------------------------------
 #! EOF
 # ---------------------------------------------------------------------------
