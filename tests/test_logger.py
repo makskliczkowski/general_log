@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 
 import pytest
 
@@ -292,6 +293,7 @@ def test_console_false_is_file_only(tmp_path, capsys):
     assert "only-in-file" in (tmp_path / "q.log").read_text(encoding="utf-8")
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX file permission bits are not supported on Windows")
 def test_log_file_is_private(tmp_path, capsys):
     """The log file is created owner-only."""
     lg = make_logger(name="perm", logfile=str(tmp_path / "p.log"))
